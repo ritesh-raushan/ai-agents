@@ -2,7 +2,6 @@ import express from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { z } from "zod";
-// import { text } from "body-parser";
 
 const server = new McpServer({
     name: "example-server",
@@ -14,20 +13,22 @@ const server = new McpServer({
 const app = express();
 
 server.tool(
-    "addTwonumbers",
-    "Add Two Numbers",
+    "addTwoNumbers",
+    "Add two numbers",
     {
         a: z.number(),
         b: z.number()
     },
-    async(arg) => {
+    async (arg) => {
         const { a, b } = arg;
-        return[
-            {
-                type: "text",
-                text: `The sum of ${a} and ${b} is ${a + b}`
-            }
-        ]
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: `The sum of ${a} and ${b} is ${a + b}`
+                }
+            ]
+        }
     }
 )
 
