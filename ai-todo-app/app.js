@@ -12,8 +12,17 @@ async function getAllTodos() {
 }
 
 async function createTodo(todo) {
-    const [result] = await db.insert(todosTable).values({ todo }).returning(todosTable.id);
-    return result?.id || null;
+    try {
+        const result = await db.insert(todosTable).values({
+            todo: todo,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+        }).returning('id');
+        return result[0].id;
+    } catch (error) {
+        console.error("Error creating todo:", error);
+        throw error;
+    }
 }
 
 async function deleteTodoById(id) {
@@ -33,7 +42,16 @@ After Planning, Take the action with appropriate tools and wait for the Observat
 Once you get the Observation, Return the AI response based on START prompt and observations.
 
 You can manage tasks by adding, viewing, updating, and deleting them.
-You must strictly follow the JSON output format.
+You must strictly follow the JSON output format and ALWAYS use the appropriate tool before confirming any action.
+
+For greetings like "hi" or "hello", respond with a helpful message about what you can do.
+
+IMPORTANT: 
+- When adding a todo, you MUST use the createTodo tool before confirming.
+- When deleting a todo, you MUST use the deleteTodoById tool before confirming.
+- When searching todos, you MUST use the searchTodo tool before responding.
+- When listing todos, you MUST use the getAllTodos tool before responding.
+- For greetings, do not use any tools, just provide a helpful introduction.
 
 You must return only valid JSON without any additional text or formatting.
 
@@ -54,63 +72,59 @@ START
 \`\`\`
 [
 {"type": "user", "user": "Add a task for shopping groceries"}
-{"type": "plan", "plan": "I will try to get more context on what user needs to shop"}
-{"type": "output", "output": "Can you tell me what all items you want to shop for?"}
-{"type": "user", "user": "I want to shop for Apples, Bananas and Oranges"}
-{"type": "plan", "plan": "I will use createTodo tool to create a new Todo in the database"}
-{"type": "action", "function": "createTodo", "input": "Shopping for Apples, Bananas and Oranges"}
+{"type": "plan", "plan": "I will create a new todo for shopping groceries"}
+{"type": "action", "function": "createTodo", "input": "Shopping groceries"}
 {"type": "observation", "observation": "2"}
-{"type": "output", "output": "Your todo has been added successfully"}
+{"type": "output", "output": "Your todo 'Shopping groceries' has been added successfully"}
 ]
 \`\`\`
-`
+`;
+
 async function handleUserPrompt(userPrompt) {
     let conversation = [{ type: "user", user: userPrompt }];
 
-    while (true) {
-        const prompt = SYSTEM_PROMPT + JSON.stringify(conversation);
-        const result = await model.generateContent(prompt);
+    const prompt = SYSTEM_PROMPT + JSON.stringify(conversation);
+    const result = await model.generateContent(prompt);
 
-        let responseText = result.response.text().trim();
+    let responseText = result.response.text().trim();
+    responseText = responseText.replace(/^```json\n/, "").replace(/\n```$/, "");
+    
+    const lastJsonMatch = responseText.match(/\[(?:[^[\]]*|\[(?:[^[\]]*|\[[^[\]]*\])*\])*\](?!.*\[)/);
+    if (!lastJsonMatch) {
+        console.error("No valid JSON array found in response");
+        return;
+    }
+    responseText = lastJsonMatch[0];
 
-        // Remove Markdown Code Blocks if present
-        responseText = responseText.replace(/^```json\n/, "").replace(/\n```$/, "");
-
-        let response;
-        try {
-            response = JSON.parse(responseText);
-        } catch (error) {
-            console.error("Error parsing JSON response:", error);
-            console.error("Raw response:", responseText);
-            return;
-        }
-
-        conversation.push(response);
-
-        if (response.type === "plan") {
-            console.log("AI Plan:", response.plan);
-        }
-
-        if (response.type === "action") {
-            console.log("Executing:", response.function, response.input);
-            if (response.function in tools) {
-                try {
-                    const observation = await tools[response.function](response.input);
-                    conversation.push({ type: "observation", observation });
-                } catch (error) {
-                    console.error(`Error executing ${response.function}:`, error);
-                    conversation.push({ type: "observation", observation: "Error occurred" });
+    try {
+        const response = JSON.parse(responseText);
+        
+        // Process each message in the response
+        for (const message of response) {
+            if (message.type === "action") {
+                // Execute the tool and get the result
+                let result;
+                if (message.function === "createTodo") {
+                    result = await createTodo(message.input);
+                } else if (message.function === "deleteTodoById") {
+                    result = await deleteTodoById(message.input);
+                } else if (message.function === "getAllTodos") {
+                    result = await getAllTodos();
+                } else if (message.function === "searchTodo") {
+                    result = await searchTodo(message.input);
                 }
-            } else {
-                console.error("Unknown function:", response.function);
-                conversation.push({ type: "observation", observation: "Invalid function" });
+                console.log("Tool execution result:", result);
+            }
+            // Only log the final output message
+            if (message.type === "output") {
+                console.log("AI:", message.output);
             }
         }
 
-        if (response.type === "output") {
-            console.log("AI:", response.output);
-            break;
-        }
+    } catch (error) {
+        console.error("Error processing response:", error);
+        console.error("Raw response:", responseText);
+        return;
     }
 }
 

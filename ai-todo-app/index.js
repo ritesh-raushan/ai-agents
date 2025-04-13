@@ -110,8 +110,8 @@ import OpenAI from "openai";
 
 // Initialize DeepSeek client
 const client = new OpenAI({
-    baseURL: 'https://api.deepseek.com',
-    apiKey: process.env.DEEPSEEK_API_KEY,
+    baseURL: 'https://api.kluster.ai/v1',
+    apiKey: process.env.KLUSTER_API_KEY,
 });
 
 async function getAllTodos() {
@@ -179,32 +179,45 @@ const messages = [{ role: 'system', content: SYSTEM_PROMPT }];
 
 while (true) {
     const query = readLineSync.question('>> ');
+    if (query.toLowerCase() === 'exit') {
+        console.log('Exiting...');
+        break;
+    }
+
     const userMessage = { 
         type: 'user', 
         user: query ,
     };
+    
     messages.push({ role: 'user', content: JSON.stringify(userMessage) });
 
     while (true) {
-        const chat = await client.chat.completions.create({
-            model: 'deepseek-chat',
-            messages: messages,
-            response_format: { type: 'json_object' },
-        });
-        const result = chat.compeltions[0].message.content;
-        messages.push({ role: 'assistant', content: result });
+        try {
+            const chat = await client.chat.completions.create({
+                model: 'klusterai/Meta-Llama-3.1-8B-Instruct-Turbo',
+                messages: messages,
+                response_format: { type: 'json_object' },
+            });
+            console.log(JSON.stringify(chat, null, 2)); // Log the response for debugging
 
-        const action = JSON.parse(result);
+            const result = chat.choices[0].message.content; // Use `choices` instead of `completions`
+            messages.push({ role: 'assistant', content: result });
 
-        if (action.type === 'output') {
-            console.log(`🤖: ${action.output}`);
+            const action = JSON.parse(result);
+
+            if (action.type === 'output') {
+                console.log(`🤖: ${action.output}`);
+                break;
+            } else if (action.type === 'action') {
+                const fn = tools[action.function];
+                if (!fn) throw new Error('Invalid Tool Call');
+                const observation = await fn(action.input);
+                const observationMessage = { type: 'observation', observation: observation };
+                messages.push({ role: 'developer', content: JSON.stringify(observationMessage) });
+            }
+        } catch (error) {
+            console.error('Error:', error);
             break;
-        } else if (action.type === 'action') {
-            const fn = tools[action.function];
-            if (!fn) throw new Error('Invalid Tool Call');
-            const observation = await fn(action.input);
-            const observationMessage = { type: 'observation', observation: observation };
-            messages.push({ role: 'developer', content: JSON.stringify(observationMessage) });
         }
     }
 }
